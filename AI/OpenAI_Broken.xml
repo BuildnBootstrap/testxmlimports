@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <JAMSObjects>
   <job
-    name="OpenAI_APICall"
+    name="OpenAI_Broken"
     method="PowerShell">
     <description><![CDATA[
 OpenAI Responses API via PowerShell. Safe parser version (no here-strings, no multi-line literals).
