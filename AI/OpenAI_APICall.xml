@@ -154,7 +154,7 @@ if ($resp.PSObject.Properties.Name -contains 'output_text' -and -not [string]::I
           <property
             name="DefaultValue"
             typename="System.String"
-            value="replace.with.API.Key" />
+            value="" />
         </properties>
       </parameter>
       <parameter

@@ -1,3 +1,3 @@
 
 Category,FileName,VisualName,Status,LastUpdated,Description,Notes
-AI,ChatGPT.xml,ChatGPT,Working,2025-11-01,Allows users to make API calls to ChatGPT - adjusting prompt;temp;characters;and passing text or files,Example Notes when broken
+AI,OpenAI_APICall.xml,ChatGPT,Working,2025-11-01,Allows users to make API calls to ChatGPT - adjusting prompt;temp;characters;and passing text or files,Example Notes when broken
