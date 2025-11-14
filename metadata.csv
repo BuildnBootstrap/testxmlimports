@@ -3,4 +3,4 @@ Category,FileName,VisualName,Status,LastUpdated,Description,Notes
 AI,OpenAI_APICall.xml,ChatGPT,Working,2025-11-01,Allows users to make API calls to ChatGPT - adjusting prompt;temp;characters;and passing text or files,Example Notes when broken
 AI,OpenAI_Broken.xml,Broken Example,Broken,2025-11-01,Demos functionality for a script with bug fixes in the works,Example Notes when broken
 AI,AnotherWorkingOption.xml,AnotherWorkingOption,Working,2025-11-01,Allows users to make API calls to ChatGPT - adjusting prompt;temp;characters;and passing text or files,Example Notes when broken
-DB,SQLexampleJob.xml,SQL Example,Working,2025-11-01,This is a SQL exmaple job,Example Notes when broken
+Database,SQLexampleJob.xml,SQL Example,Working,2025-11-01,This is a SQL exmaple job,Example Notes when broken
