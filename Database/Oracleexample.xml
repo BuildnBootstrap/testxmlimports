@@ -1,0 +1,350 @@
+<?xml version="1.0" encoding="utf-8"?>
+<JAMSObjects>
+  <job
+    name="OpenAI_APICall"
+    method="PowerShell">
+    <description><![CDATA[
+OpenAI Responses API via PowerShell. Safe parser version (no here-strings, no multi-line literals).
+Optional FilePath to include a flat text file. ApiKey is a parameter.
+    ]]></description>
+    <source><![CDATA[
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+$ErrorActionPreference = 'Stop'
+
+# ----------- Required API key -----------
+$apiKey = '<<ApiKey>>'
+if ([string]::IsNullOrWhiteSpace($apiKey)) {
+  throw 'ApiKey parameter is empty. Please supply your OpenAI key (sk-...).'
+}
+$apiKey = $apiKey.Trim()
+
+# ----------- Inputs & defaults -----------
+$model        = '<<Model>>';           if ([string]::IsNullOrWhiteSpace($model))        { $model = 'gpt-4.1' }
+$tempStr      = '<<Temperature>>';     if ([string]::IsNullOrWhiteSpace($tempStr))      { $tempStr = '0.2' }
+$maxStr       = '<<MaxOutputTokens>>'; if ([string]::IsNullOrWhiteSpace($maxStr))       { $maxStr = '300' }
+$filePath     = '<<FilePath>>';        if ([string]::IsNullOrWhiteSpace($filePath))     { $filePath = '' }
+$encodingName = '<<Encoding>>';        if ([string]::IsNullOrWhiteSpace($encodingName)) { $encodingName = 'UTF8' }
+$maxFileKBStr = '<<MaxFileKB>>';       if ([string]::IsNullOrWhiteSpace($maxFileKBStr)) { $maxFileKBStr = '512' }
+$maxCharsStr  = '<<MaxChars>>';        if ([string]::IsNullOrWhiteSpace($maxCharsStr))  { $maxCharsStr  = '20000' }
+$userInput    = '<<UserInput>>';       if ($null -eq $userInput) { $userInput = '' }
+$sysInstr     = '<<SystemInstructions>>'; if ($null -eq $sysInstr) { $sysInstr = '' }
+
+$temperature = [double]$tempStr
+$maxOut      = [int]$maxStr
+$maxFileKB   = [int]$maxFileKBStr
+$maxChars    = [int]$maxCharsStr
+
+# ----------- Optional: read flat file -----------
+$fileBlock = ''
+if (-not [string]::IsNullOrWhiteSpace($filePath)) {
+  if (-not (Test-Path -LiteralPath $filePath)) {
+    throw ('FilePath not found: ' + $filePath)
+  }
+  $fi = Get-Item -LiteralPath $filePath
+  $sizeKB = [math]::Ceiling($fi.Length / 1024.0)
+  if ($sizeKB -gt $maxFileKB) {
+    throw ('File ' + $fi.FullName + ' is ' + $sizeKB + ' KB which exceeds MaxFileKB=' + $maxFileKB + '.')
+  }
+
+  # Map encodings to PowerShell names
+  $encMap = @{
+    'UTF8'='utf8'; 'UTF-8'='utf8'; 'UTF7'='utf7'; 'UTF-7'='utf7';
+    'UTF32'='utf32'; 'UTF-32'='utf32'; 'UNICODE'='unicode';
+    'ASCII'='ascii'; 'BIGENDIANUNICODE'='bigendianunicode'
+  }
+  $encKey = ($encodingName.ToUpper().Replace(' ',''))
+  $psEnc = $encMap[$encKey]; if (-not $psEnc) { $psEnc = 'utf8' }
+
+  $raw = Get-Content -LiteralPath $fi.FullName -Encoding $psEnc -Raw
+  if ($null -eq $raw) { $raw = '' } else { $raw = [string]$raw }
+  if ($raw.Length -gt $maxChars) {
+    $raw = $raw.Substring(0, $maxChars)
+    Write-Host ('Note: file content truncated to ' + $maxChars + ' characters.')
+  }
+
+  # Build a clean block without multi-line string literals
+  $nl = [Environment]::NewLine
+  $parts = @()
+  $parts += ('Filename: ' + $fi.Name)
+  $parts += '----- FILE START -----'
+  $parts += $raw
+  $parts += '----- FILE END -----'
+  $fileBlock = [string]::Join($nl, $parts)
+}
+
+# ----------- Build messages -----------
+$messages = New-Object System.Collections.ArrayList
+
+if (-not [string]::IsNullOrWhiteSpace($sysInstr)) {
+  [void]$messages.Add(@{ role = 'system'; content = $sysInstr })
+} else {
+  [void]$messages.Add(@{ role = 'system'; content = 'You are a business analyst. Provide clear, concise, executive-friendly responses.' })
+}
+
+if (-not [string]::IsNullOrWhiteSpace($fileBlock)) {
+  [void]$messages.Add(@{ role = 'user'; content = 'Here is a file for context:' })
+  [void]$messages.Add(@{ role = 'user'; content = $fileBlock })
+}
+
+if (-not [string]::IsNullOrWhiteSpace($userInput)) {
+  [void]$messages.Add(@{ role = 'user'; content = $userInput })
+}
+
+$bodyObj = @{
+  model             = $model
+  input             = $messages
+  temperature       = $temperature
+  max_output_tokens = $maxOut
+}
+$bodyJson = $bodyObj | ConvertTo-Json -Depth 10
+
+# ----------- Call API -----------
+$headers = New-Object 'System.Collections.Generic.Dictionary[string,string]'
+$headers['Authorization'] = 'Bearer ' + $apiKey
+$headers['Content-Type']  = 'application/json'
+
+try {
+  $resp = Invoke-RestMethod -Method Post -Uri 'https://api.openai.com/v1/responses' -Headers $headers -Body $bodyJson
+} catch {
+  throw ('API call failed: ' + $_.Exception.Message)
+}
+
+# ----------- Output clean result -----------
+if ($resp.PSObject.Properties.Name -contains 'output_text' -and -not [string]::IsNullOrWhiteSpace($resp.output_text)) {
+  $resp.output_text
+} elseif ($resp.output -and $resp.output[0] -and $resp.output[0].content -and $resp.output[0].content[0] -and $resp.output[0].content[0].text) {
+  $resp.output[0].content[0].text
+} else {
+  $resp | ConvertTo-Json -Depth 10
+}
+    ]]></source>
+    <properties>
+      <property
+        name="ExecuteAs"
+        typename="MVPSI.JAMS.CredentialReference"
+        value="JAMS" />
+    </properties>
+    <elements>
+      <element
+        type="Documentation"
+        name="">
+        <properties>
+          <property
+            name="DocumentationType"
+            typename="MVPSI.JAMS.DocumentationType"
+            value="Documentation" />
+          <property
+            name="Content"
+            typename="System.String"
+            value="Automates sending prompts, instructions, and optional file-based context (such as JAMS reports, logs, CSV/TXT summaries, etc.) to OpenAI’s Responses API (“ChatGPT”).&#xA;Produces an executive-friendly textual response suitable for reporting, analysis, summaries, or automated follow-up tasks.&#xA;&#xA;✅ Overview&#xA;&#xA;This job executes a PowerShell script that calls the OpenAI Responses API.&#xA;It accepts:&#xA;&#xA;Direct user text instructions&#xA;&#xA;Optional system instructions (to shape tone/style)&#xA;&#xA;Optional flat-file input such as CSV/TXT reports&#xA;&#xA;API key provided as a job parameter (can later move to secure storage)&#xA;&#xA;The job constructs messages, sends them to the OpenAI model, retrieves the output, and returns it back to JAMS.&#xA;&#xA;✅ Key Features&#xA;&#xA;✔ Supports analysis of JAMS-generated reports&#xA;Provide either:&#xA;&#xA;A fixed file path, or&#xA;&#xA;A folder + pattern (job automatically picks the newest file)&#xA;&#xA;✔ No here-strings&#xA;Safe for the JAMS script editor (no column-1 indentation issues).&#xA;&#xA;✔ Flexible prompting&#xA;Supports both user prompts and system-level direction (e.g., “You are an analyst…”).&#xA;&#xA;✔ Friendly defaults&#xA;Default model, temperature, and output token limits are already set.&#xA;&#xA;✅ Parameters&#xA;ApiKey (required)&#xA;&#xA;Your OpenAI API key (e.g., sk-…).&#xA;&#xA;Note: This can later be migrated to a secure JAMS Credential or Sensitive Variable.&#xA;&#xA;UserInput (optional)&#xA;&#xA;The main instruction to ChatGPT.&#xA;Examples:&#xA;&#xA;“Summarize this report for leadership.”&#xA;&#xA;“Identify patterns, errors, or unusual behavior.”&#xA;&#xA;“Rewrite in business-friendly language.”&#xA;&#xA;SystemInstructions (optional)&#xA;&#xA;Guidance for how the model should behave.&#xA;Examples:&#xA;&#xA;“You are a business analyst.”&#xA;&#xA;“Respond concisely and in bullet points.”&#xA;&#xA;If blank, defaults to a business-analyst tone.&#xA;&#xA;FilePath (optional)&#xA;&#xA;Full path to a specific file to pass to the model.&#xA;Supports .csv, .txt, .log, or any plaintext file.&#xA;&#xA;Use this when your upstream job outputs a fixed filename.&#xA;&#xA;FileFolder + FilePattern (optional)&#xA;&#xA;If FilePath is blank, the job will scan this folder, match the pattern, and pick the newest file.&#xA;&#xA;Examples:&#xA;&#xA;FileFolder = C:\ProgramData\JAMS\Output&#xA;&#xA;FilePattern = *.csv&#xA;&#xA;Perfect for report jobs that produce timestamped outputs like:&#xA;&#xA;HistoryReport_20250121_094533.csv&#xA;HistoryReport_20250121_103002.csv&#xA;&#xA;Model&#xA;&#xA;Which OpenAI model to use.&#xA;Default: gpt-4.1&#xA;&#xA;Temperature&#xA;&#xA;Controls creativity.&#xA;&#xA;0.0–0.2 = factual/structured&#xA;&#xA;0.5+ = more creative&#xA;&#xA;Default: 0.2&#xA;&#xA;MaxOutputTokens&#xA;&#xA;Maximum length of the response.&#xA;Default: 300&#xA;&#xA;Execution Preference Parameters (inherited)&#xA;&#xA;JAMSTraceLevel&#xA;&#xA;PSExecutionPolicyPreference&#xA;&#xA;ErrorActionPreference&#xA;&#xA;Keep defaults unless troubleshooting.&#xA;&#xA;✅ How It Works (Technical Summary)&#xA;&#xA;Loads input parameters from JAMS.&#xA;&#xA;Picks the target file:&#xA;&#xA;FilePath, OR&#xA;&#xA;newest file in FileFolder matching FilePattern&#xA;&#xA;Reads the file as UTF-8 text (no size or encoding surprises).&#xA;&#xA;Constructs a message list:&#xA;&#xA;system instructions&#xA;&#xA;optional file content&#xA;&#xA;user instructions&#xA;&#xA;Sends the message list to the OpenAI Responses API endpoint:&#xA;&#xA;POST https://api.openai.com/v1/responses&#xA;&#xA;&#xA;Receives a structured response.&#xA;&#xA;Safely extracts the final text output.&#xA;&#xA;Writes standardized output to the JAMS log and return value.&#xA;&#xA;✅ Typical Usage Patterns&#xA;✅ 1. Run manually from JAMS&#xA;&#xA;Enter:&#xA;&#xA;API key&#xA;&#xA;UserInput&#xA;&#xA;Optional FilePath or FileFolder/Pattern&#xA;&#xA;Submit job&#xA;&#xA;✅ 2. Automatically summarize a prior job’s report&#xA;&#xA;Configure a Job Completion Trigger on your report job:&#xA;&#xA;Target job: OpenAI.ChatGPT.ParameterKey&#xA;&#xA;Override parameters:&#xA;&#xA;ApiKey = your key&#xA;&#xA;FileFolder = folder where report is written&#xA;&#xA;FilePattern = e.g., History*.csv&#xA;&#xA;UserInput = “Summarize this report for executives.”&#xA;&#xA;This creates a fully automated “report → summarize → notify” workflow.&#xA;&#xA;✅ 3. Let ChatGPT draft daily or weekly digest reports&#xA;&#xA;Schedule the OpenAI job alone and point FileFolder/FilePattern to a folder where logs or data accumulate.&#xA;&#xA;✅ 4. Ask ChatGPT to inspect logs, find anomalies, or explain errors&#xA;&#xA;Just point FilePath at an exported JAMS log or any system log.&#xA;&#xA;✅ Troubleshooting&#xA;“UnexpectedToken” / here-string errors&#xA;&#xA;Fixed by using the safe version (no here-strings).&#xA;&#xA;“File not found”&#xA;&#xA;Check:&#xA;&#xA;FilePath exactly matches a file&#xA;OR&#xA;&#xA;FileFolder exists&#xA;&#xA;Pattern matches at least one file&#xA;&#xA;401 Unauthorized&#xA;&#xA;ApiKey was empty or incorrect.&#xA;Check overrides if using a trigger.&#xA;&#xA;Output looks like JSON&#xA;&#xA;Means the model didn’t return output_text; this happens if the API returns structured objects.&#xA;This job prints fallback JSON for debugging.&#xA;&#xA;✅ Best Practices&#xA;&#xA;Use system instructions to control output style (“respond in bullet points”, “be brief”, etc.).&#xA;&#xA;Prefer FileFolder + Pattern if your report job timestamps outputs.&#xA;&#xA;Keep Model = gpt-4.1 unless doing highly structured tasks.&#xA;&#xA;Keep Temperature low for factual processing.&#xA;&#xA;Keep MaxOutputTokens below 500 to prevent long outputs unless needed." />
+        </properties>
+      </element>
+    </elements>
+    <parameters>
+      <parameter
+        name="ApiKey"
+        dataType="Text"
+        length="200"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="1" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="" />
+        </properties>
+      </parameter>
+      <parameter
+        name="Model"
+        dataType="Text"
+        length="128"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="2" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="gpt-4.1" />
+        </properties>
+      </parameter>
+      <parameter
+        name="Temperature"
+        dataType="Text"
+        length="16"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="3" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="0.2" />
+        </properties>
+      </parameter>
+      <parameter
+        name="MaxOutputTokens"
+        dataType="Text"
+        length="16"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="4" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="300" />
+        </properties>
+      </parameter>
+      <parameter
+        name="FilePath"
+        dataType="Text"
+        length="1024"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="5" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="" />
+        </properties>
+      </parameter>
+      <parameter
+        name="Encoding"
+        dataType="Text"
+        length="40"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="6" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="UTF8" />
+        </properties>
+      </parameter>
+      <parameter
+        name="MaxFileKB"
+        dataType="Text"
+        length="16"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="7" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="512" />
+        </properties>
+      </parameter>
+      <parameter
+        name="MaxChars"
+        dataType="Text"
+        length="16"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="8" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="20000" />
+        </properties>
+      </parameter>
+      <parameter
+        name="UserInput"
+        dataType="Text"
+        length="4000"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="9" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="Summarize the following content in business-friendly terms." />
+        </properties>
+      </parameter>
+      <parameter
+        name="SystemInstructions"
+        dataType="Text"
+        length="4000"
+        inherited="False">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="10" />
+          <property
+            name="DefaultValue"
+            typename="System.String"
+            value="" />
+        </properties>
+      </parameter>
+      <parameter
+        name="JAMSTraceLevel"
+        dataType="Text"
+        length="20"
+        inherited="True">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="11" />
+        </properties>
+      </parameter>
+      <parameter
+        name="PSExecutionPolicyPreference"
+        dataType="Text"
+        length="20"
+        inherited="True">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="12" />
+        </properties>
+      </parameter>
+      <parameter
+        name="ErrorActionPreference"
+        dataType="Text"
+        length="20"
+        inherited="True">
+        <properties>
+          <property
+            name="Sequence"
+            typename="System.Int32"
+            value="13" />
+        </properties>
+      </parameter>
+    </parameters>
+    <acl>
+      <ace
+        identifier="DESKTOP-PRIHPI0\Wesle"
+        inheritcontainer="False"
+        inheritobject="False"
+        inheritonly="False"
+        access="Manage,Change,Inquire,Delete,Submit,Debug,Monitor,Abort,Control" />
+    </acl>
+  </job>
+</JAMSObjects>

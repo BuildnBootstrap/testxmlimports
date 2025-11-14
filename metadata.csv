@@ -4,3 +4,9 @@ AI,OpenAI_APICall.xml,ChatGPT,Working,2025-11-01,Allows users to make API calls 
 AI,OpenAI_Broken.xml,Broken Example,Broken,2025-11-01,Demos functionality for a script with bug fixes in the works,Example Notes when broken
 AI,AnotherWorkingOption.xml,AnotherWorkingOption,Working,2025-11-01,Allows users to make API calls to ChatGPT - adjusting prompt;temp;characters;and passing text or files,Example Notes when broken
 Database,SQLexampleJob.xml,SQL Example,Working,2025-11-01,This is a SQL exmaple job,Example Notes when broken
+Database,OracleexampleJob.xml,Oracle Example,Working,2025-11-01,This is an Oracle example job,Example Notes when broken
+CRM,SalesForceexample.xml,Salesforce,Working,2025-11-01,This is a Salesforce exmaple job,Example Notes when broken
+CRM,HubspotexampleJob.xml,Hubspot,Working,2025-11-01,This is an Hubspot example job,Example Notes when broken
+
+
+
