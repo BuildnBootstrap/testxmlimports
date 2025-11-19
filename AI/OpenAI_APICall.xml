@@ -4,12 +4,40 @@
     name="OpenAI_APICall"
     method="PowerShell">
     <description><![CDATA[
-OpenAI Responses API via PowerShell. Safe parser version (no here-strings, no multi-line literals).
+OpenAI Responses API via PowerShell. 
 Optional FilePath to include a flat text file. ApiKey is a parameter.
     ]]></description>
-    <source><![CDATA[
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+    <source><![CDATA[Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 $ErrorActionPreference = 'Stop'
+
+# Ensure console + PowerShell use UTF-8 so responses display correctly
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding          = [System.Text.Encoding]::UTF8
+
+# Optional: make Out-File default to UTF-8 if you ever pipe to it
+$PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+
+# ----------- Optional: normalize fancy Unicode punctuation to ASCII -----------
+function Convert-UnicodePunctuationToAscii {
+    param(
+        [string]$Text
+    )
+    if ([string]::IsNullOrEmpty($Text)) { return $Text }
+
+    # Smart single quotes / apostrophes → '
+    $Text = $Text -replace '[\u2018\u2019\u2032]', "'"
+
+    # Smart double quotes → "
+    $Text = $Text -replace '[\u201C\u201D\u2033]', '"'
+
+    # En dash / em dash → -
+    $Text = $Text -replace '[\u2013\u2014]', '-'
+
+    # Ellipsis → ...
+    $Text = $Text -replace '\u2026', '...'
+
+    return $Text
+}
 
 # ----------- Required API key -----------
 $apiKey = '<<ApiKey>>'
@@ -23,79 +51,86 @@ $model        = '<<Model>>';           if ([string]::IsNullOrWhiteSpace($model))
 $tempStr      = '<<Temperature>>';     if ([string]::IsNullOrWhiteSpace($tempStr))      { $tempStr = '0.2' }
 $maxStr       = '<<MaxOutputTokens>>'; if ([string]::IsNullOrWhiteSpace($maxStr))       { $maxStr = '300' }
 $filePath     = '<<FilePath>>';        if ([string]::IsNullOrWhiteSpace($filePath))     { $filePath = '' }
-$encodingName = '<<Encoding>>';        if ([string]::IsNullOrWhiteSpace($encodingName)) { $encodingName = 'UTF8' }
 $maxFileKBStr = '<<MaxFileKB>>';       if ([string]::IsNullOrWhiteSpace($maxFileKBStr)) { $maxFileKBStr = '512' }
-$maxCharsStr  = '<<MaxChars>>';        if ([string]::IsNullOrWhiteSpace($maxCharsStr))  { $maxCharsStr  = '20000' }
 $userInput    = '<<UserInput>>';       if ($null -eq $userInput) { $userInput = '' }
 $sysInstr     = '<<SystemInstructions>>'; if ($null -eq $sysInstr) { $sysInstr = '' }
 
 $temperature = [double]$tempStr
 $maxOut      = [int]$maxStr
 $maxFileKB   = [int]$maxFileKBStr
-$maxChars    = [int]$maxCharsStr
 
-# ----------- Optional: read flat file -----------
-$fileBlock = ''
+# ----------- Optional: read & base64-encode file -----------
+$fileMessage = $null
+
 if (-not [string]::IsNullOrWhiteSpace($filePath)) {
   if (-not (Test-Path -LiteralPath $filePath)) {
     throw ('FilePath not found: ' + $filePath)
   }
+
   $fi = Get-Item -LiteralPath $filePath
   $sizeKB = [math]::Ceiling($fi.Length / 1024.0)
   if ($sizeKB -gt $maxFileKB) {
     throw ('File ' + $fi.FullName + ' is ' + $sizeKB + ' KB which exceeds MaxFileKB=' + $maxFileKB + '.')
   }
 
-  # Map encodings to PowerShell names
-  $encMap = @{
-    'UTF8'='utf8'; 'UTF-8'='utf8'; 'UTF7'='utf7'; 'UTF-7'='utf7';
-    'UTF32'='utf32'; 'UTF-32'='utf32'; 'UNICODE'='unicode';
-    'ASCII'='ascii'; 'BIGENDIANUNICODE'='bigendianunicode'
-  }
-  $encKey = ($encodingName.ToUpper().Replace(' ',''))
-  $psEnc = $encMap[$encKey]; if (-not $psEnc) { $psEnc = 'utf8' }
+  # Read raw bytes and base64-encode so it's always JSON-safe
+  $bytes   = [System.IO.File]::ReadAllBytes($fi.FullName)
+  $b64     = [Convert]::ToBase64String($bytes)
 
-  $raw = Get-Content -LiteralPath $fi.FullName -Encoding $psEnc -Raw
-  if ($null -eq $raw) { $raw = '' } else { $raw = [string]$raw }
-  if ($raw.Length -gt $maxChars) {
-    $raw = $raw.Substring(0, $maxChars)
-    Write-Host ('Note: file content truncated to ' + $maxChars + ' characters.')
-  }
+  $fileMessage = @"
+I am providing you with a file in base64 format.
 
-  # Build a clean block without multi-line string literals
-  $nl = [Environment]::NewLine
-  $parts = @()
-  $parts += ('Filename: ' + $fi.Name)
-  $parts += '----- FILE START -----'
-  $parts += $raw
-  $parts += '----- FILE END -----'
-  $fileBlock = [string]::Join($nl, $parts)
+Filename: $($fi.Name)
+SizeKB:   $sizeKB
+
+The file contents (base64 encoded) are below. Conceptually, you can decode this base64 to reconstruct the original file contents.
+
+----- FILE BASE64 START -----
+$b64
+----- FILE BASE64 END -----
+"@
 }
 
-# ----------- Build messages -----------
-$messages = New-Object System.Collections.ArrayList
+# ----------- Build messages for Chat Completions -----------
+$messages = @()
 
+# System message – you can also tell it to avoid non-ASCII if you want
 if (-not [string]::IsNullOrWhiteSpace($sysInstr)) {
-  [void]$messages.Add(@{ role = 'system'; content = $sysInstr })
+  $messages += @{
+    role    = 'system'
+    content = $sysInstr
+  }
 } else {
-  [void]$messages.Add(@{ role = 'system'; content = 'You are a business analyst. Provide clear, concise, executive-friendly responses.' })
+  $messages += @{
+    role    = 'system'
+    content = 'You are a business analyst. Provide clear, concise, executive-friendly responses using plain ASCII characters (no smart quotes or emojis).'
+  }
 }
 
-if (-not [string]::IsNullOrWhiteSpace($fileBlock)) {
-  [void]$messages.Add(@{ role = 'user'; content = 'Here is a file for context:' })
-  [void]$messages.Add(@{ role = 'user'; content = $fileBlock })
+# File message (if present)
+if ($fileMessage) {
+  $messages += @{
+    role    = 'user'
+    content = $fileMessage
+  }
 }
 
+# User input message (if present)
 if (-not [string]::IsNullOrWhiteSpace($userInput)) {
-  [void]$messages.Add(@{ role = 'user'; content = $userInput })
+  $messages += @{
+    role    = 'user'
+    content = $userInput
+  }
 }
 
+# ----------- Build body for Chat Completions -----------
 $bodyObj = @{
-  model             = $model
-  input             = $messages
-  temperature       = $temperature
-  max_output_tokens = $maxOut
+  model       = $model
+  messages    = $messages
+  temperature = $temperature
+  max_tokens  = $maxOut
 }
+
 $bodyJson = $bodyObj | ConvertTo-Json -Depth 10
 
 # ----------- Call API -----------
@@ -104,20 +139,41 @@ $headers['Authorization'] = 'Bearer ' + $apiKey
 $headers['Content-Type']  = 'application/json'
 
 try {
-  $resp = Invoke-RestMethod -Method Post -Uri 'https://api.openai.com/v1/responses' -Headers $headers -Body $bodyJson
+  $resp = Invoke-RestMethod -Method Post -Uri 'https://api.openai.com/v1/chat/completions' -Headers $headers -Body $bodyJson
 } catch {
-  throw ('API call failed: ' + $_.Exception.Message)
+  Write-Host "API call failed: $($_.Exception.Message)"
+
+  if ($_.ErrorDetails -and -not [string]::IsNullOrWhiteSpace($_.ErrorDetails.Message)) {
+    Write-Host "ErrorDetails.Message:"
+    Write-Host $_.ErrorDetails.Message
+  }
+
+  if ($_.Exception.Response -and $_.Exception.Response.GetResponseStream()) {
+    try {
+      $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+      $errBody = $reader.ReadToEnd()
+      Write-Host "Raw error body from HTTP response:"
+      Write-Host $errBody
+    } catch {
+      Write-Host "Failed to read error response stream: $($_.Exception.Message)"
+    }
+  }
+
+  throw
 }
 
 # ----------- Output clean result -----------
-if ($resp.PSObject.Properties.Name -contains 'output_text' -and -not [string]::IsNullOrWhiteSpace($resp.output_text)) {
-  $resp.output_text
-} elseif ($resp.output -and $resp.output[0] -and $resp.output[0].content -and $resp.output[0].content[0] -and $resp.output[0].content[0].text) {
-  $resp.output[0].content[0].text
+if ($resp.choices -and $resp.choices[0] -and $resp.choices[0].message -and $resp.choices[0].message.content) {
+  $result = $resp.choices[0].message.content
+
+  # Normalize fancy punctuation to plain ASCII so no weird characters appear
+  $result = Convert-UnicodePunctuationToAscii $result
+
+  $result
 } else {
   $resp | ConvertTo-Json -Depth 10
 }
-    ]]></source>
+]]></source>
     <properties>
       <property
         name="ExecuteAs"
